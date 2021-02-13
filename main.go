@@ -1,20 +1,59 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 )
 
 const (
 	BINANCE_STREAM_URL = "wss://stream.binance.com:9443/ws"
 )
 
+type Limiter chan struct{}
+
+func NewLimiter() Limiter {
+	return make(Limiter, 5)
+}
+
+func (l Limiter) Get() {
+	l <- struct{}{}
+	go func() {
+		time.Sleep(time.Second * 1)
+		<-l
+	}()
+}
+
 func run(ctx *cli.Context) error {
+	streams := ctx.StringSlice("stream")
+
+	if ctx.Path("stream-file") != "" {
+		file, err := os.OpenFile(ctx.Path("stream-file"), os.O_RDONLY, 0)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		reader := bufio.NewReader(file)
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				return err
+			}
+
+			streams = append(streams, strings.TrimSuffix(string(line), "\n"))
+		}
+	}
+
 	c, _, err := websocket.DefaultDialer.Dial(BINANCE_STREAM_URL, nil)
 	if err != nil {
 		return err
@@ -48,19 +87,30 @@ func run(ctx *cli.Context) error {
 	}()
 
 	go func() {
+		limiter := NewLimiter()
 		ticker := time.NewTicker(time.Second * 60)
 
-		c.WriteJSON(map[string]interface{}{
-			"method": "SUBSCRIBE",
-			"params": ctx.StringSlice("stream"),
-			"id":     1,
-		})
+		for i := 0; i < len(streams); i += 32 {
+			end := i + 32
+
+			if end > len(streams) {
+				end = len(streams)
+			}
+
+			limiter.Get()
+			c.WriteJSON(map[string]interface{}{
+				"method": "SUBSCRIBE",
+				"params": streams[i:end],
+				"id":     1,
+			})
+		}
 
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
+				limiter.Get()
 				c.WriteMessage(websocket.PingMessage, nil)
 			}
 		}
@@ -78,7 +128,11 @@ func main() {
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:  "stream",
-				Usage: "a stream to subscribe too",
+				Usage: "provide the name of a stream to subscribe too",
+			},
+			&cli.PathFlag{
+				Name:  "stream-file",
+				Usage: "a newline-delimitated file of streams that will be subscribed too",
 			},
 		},
 	}
