@@ -87,6 +87,7 @@ func run(ctx *cli.Context) error {
 
 			if rfc3339 {
 				data["E"] = time.Unix(0, int64(data["E"].(float64))*int64(time.Millisecond))
+				data["T"] = time.Unix(0, int64(data["T"].(float64))*int64(time.Millisecond))
 
 				message, err = json.Marshal(data)
 				if err != nil {
