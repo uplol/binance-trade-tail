@@ -33,6 +33,7 @@ func (l Limiter) Get() {
 
 func run(ctx *cli.Context) error {
 	streams := ctx.StringSlice("stream")
+	rfc3339 := ctx.Bool("rfc3339-timestamp")
 
 	if ctx.Path("stream-file") != "" {
 		file, err := os.OpenFile(ctx.Path("stream-file"), os.O_RDONLY, 0)
@@ -80,9 +81,20 @@ func run(ctx *cli.Context) error {
 				continue
 			}
 
-			if messageType == websocket.TextMessage {
-				os.Stdout.Write(append(message, '\r', '\n'))
+			if messageType != websocket.TextMessage {
+				continue
 			}
+
+			if rfc3339 {
+				data["E"] = time.Unix(0, int64(data["E"].(float64))*int64(time.Millisecond))
+
+				message, err = json.Marshal(data)
+				if err != nil {
+					panic(err)
+				}
+			}
+
+			os.Stdout.Write(append(message, '\r', '\n'))
 		}
 	}()
 
@@ -133,6 +145,10 @@ func main() {
 			&cli.PathFlag{
 				Name:  "stream-file",
 				Usage: "a newline-delimitated file of streams that will be subscribed too",
+			},
+			&cli.BoolFlag{
+				Name:  "rfc3339-timestamp",
+				Usage: "rewrite timestamps in RFC 3339 format",
 			},
 		},
 	}
